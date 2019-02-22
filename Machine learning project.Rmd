@@ -1,0 +1,121 @@
+---
+title: "Building algorithm to predict Motion class in dumbell biceps curl"
+author: "Mahmoud Elsheikh"
+date: "2/22/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Synopsis:
+Building a machine learning algorithm to predict different fashions of Unilateral dumbbell biceps curl depending on the accelerometers data on belt, forearm, arm and dumbbell. The algorithm was build using Principle Components Analysis (PCA) as preprocess and random forest as classification technique with cross validation to over come any over-fitting might be produced due to using random forest.
+
+## 2. Steps of building the algorithm:
+
+### 2.1 Defining the question:
+Predict the different fashions of dumbbell lefts in the columns classe either A,B,C,D,E. from different accelerometer readings
+
+### 2.2 Downloading the data:
+
+```{r cache=TRUE}
+fileurltrain<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileurltest<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileurltrain,destfile="./training.csv")
+download.file(fileurltest,destfile="./testing.csv")
+trainingfile<-read.csv("./training.csv")
+testingfile<-read.csv("./testing.csv")
+```
+
+### 2.3 Exploratory data analysis:
+The structure of the data pml-training file is 160 columns and 19622 rows and pml-testing file are 160 columns with 20 rows.  
+
+```{r results=FALSE,warning=FALSE,message=FALSE}
+library(caret)
+library(ggfortify)
+library(kableExtra)
+library(dplyr)
+dim(trainingfile)
+str(trainingfile)
+head(trainingfile)
+colname<-colnames(trainingfile)
+table(trainingfile$new_window)
+timepoints<-length(levels(factor(trainingfile$cvtd_timestamp)))
+str(testingfile)
+table(testingfile$new_window)
+trainingcol<-trainingfile[trainingfile$new_window=="yes",]
+trainingS<-trainingfile[trainingfile$new_window!="yes",]
+trainingnona<-trainingS[,colSums(is.na(trainingS)) != nrow(trainingS)]
+trainingnona<-trainingnona[,colSums(trainingnona !="")!=0]
+trainingnona<-trainingnona[,c(-1:-7,-11,-24,-37,-50)]
+trainNA<-trainingnona[,colSums(is.na(trainingnona)) >0]
+```
+
+```{r fig.height=5, fig.width=7}
+par(mfcol = c(2,2))
+plot(trainingfile$user_name,trainingfile$classe,xlab = "User Names",ylab="Motion class",main= "Users Vs Motion class")
+plot(trainingfile$new_window,trainingfile$classe,xlab = "New window status",ylab="Motion class",main="New window status Vs Motion classes")
+plot(trainingfile$num_window,trainingfile$classe,xlab = "Window Number",ylab="Motion class",main="Window number Vs Motion classes")
+```
+
+### 2.4 Assumptions and Modifications:
+1. Columns **`r colname[1:7]`** containing row numbers, usernames , Time stamps , new window status and window number. All these columns were ignored because
+- The Motion class is nearly equally distributed over different users.  
+- The time stamps consist only of 20 points distributed over different users which makes it irrelevant to the prediction algorithm.  
+-New window rows labeled as "yes" contains are summary of the previous window such as averages,variance, standard deviation. These columns where ignored as the level data granulation in the testing table is only at the level of single readings not collective accumulation of data over the window period.   
+- The window number also is removed for the scope of the algorithm as it is more or less equally distributed over the Motion classes.  
+2. After removing the previous columns and rows, all empty columns and columns containing only NAs or only #Div/0 are removed to compress the data more and keep only relevant components and predictors.
+3. Checked the compressed data for any NA values that might need imputation and there were none.  
+
+### 2.5 Data slicing:
+As the training file consist of 19216 reading it is recommended to slice the data to three sets:  
+- Training set with around 60% of the data.  
+- Validation set with around  20% of the data.  
+- Testing set with around  20% of the data.  
+``` {r}
+set.seed(3434)
+inTrain<-createDataPartition(y=trainingnona$classe,p=0.6,list=FALSE)
+trainingset<-trainingnona[inTrain,]
+valtestsets<-trainingnona[-inTrain,]
+inBuild<-createDataPartition(y=valtestsets$classe,p=0.5,list=FALSE)
+validationset<-valtestsets[inBuild,]
+testingset<-valtestsets[-inBuild,]
+dim(trainingset)
+dim(validationset)
+dim(testingset)
+```
+
+### 2.6 Building algorithm:  
+1. Investigating principle component analysis as a preprocess technique:
+```{r}
+autoplot(prcomp(trainingset[,-49]),data=trainingset,colour='classe',loadings=TRUE,loadings.label.size = 3,loadings.colour = "blue",loadings.label = TRUE)
+prepro<-preProcess(trainingset[,-49],method = "pca")
+prepro
+```
+23 components will capture 95% of the variance in the data.  
+
+2. Building a model using principle component analysis, random forest as a classification method and cross validation to overcome over-fitting of the model.
+```{r cache=TRUE}
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           allowParallel = TRUE)
+fit<-train(classe~.,data = trainingset,preprocess="pca",method="rf",trControl=fitControl)
+fit
+predval<-predict(fit,validationset)
+Accuracyvalidationset<-confusionMatrix(validationset$classe,predval)$overall[1]
+predtest<-predict(fit,testingset)
+Accuracytestingset<-confusionMatrix(testingset$classe,predtest)$overall[1]
+predquiz<-predict(fit,testingfile)
+Accuracy<-c(0.9884670,Accuracyvalidationset,Accuracytestingset)
+Label<-c("Training Model","Validation","Test")
+```
+```{r}
+Acctable<-as.data.frame(Accuracy)
+row.names(Acctable)<-c("Training Model","Validation","Test")
+Acctable %>% kable() %>% kable_styling(position="center",full_width = FALSE)
+```
+
+As the table above shows accuracy is in the acceptable range with low calculation complexity.  
+The Quiz prediction results are as follows:  
+**`r predquiz`**
